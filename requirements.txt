@@ -1,0 +1,6 @@
+# Install with: pip3 install -r requirements.txt
+# System dependencies (not on PyPI):
+#   - tesseract  (split_dos.py only)        -> brew install tesseract
+#   - LibreOffice (process_po.py phase 2)   -> brew install --cask libreoffice
+
+PyMuPDF>=1.27,<2
