@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,11 @@ from pathlib import Path
 import fitz
 
 INVOICE_RE = re.compile(r"Invoice\s*Number\s*[:\s]\s*(\S+)", re.IGNORECASE)
+SOLD_TO_RE = re.compile(
+    r"SOLD\s*TO\s*:\s*\n\s*DELIVER\s*TO\s*:\s*\n\s*(.+)",
+    re.IGNORECASE,
+)
+WRIST_KEYWORD = "wrist far east"
 
 
 @dataclass
@@ -112,6 +118,28 @@ def split_pdf(input_path: Path, out_dir: Path) -> list[Path]:
     return written
 
 
+def collect_wrist_invoices(invoices_root: Path) -> None:
+    """Copy Invoice_*.pdf whose 'Sold To' contains WRIST_KEYWORD into invoices_root/Wrist/."""
+    dest_dir = invoices_root / "Wrist"
+    copied = scanned = 0
+    for pdf in sorted(invoices_root.rglob("Invoice_*.pdf")):
+        if dest_dir in pdf.parents:
+            continue
+        scanned += 1
+        with fitz.open(pdf) as doc:
+            text = doc[0].get_text("text")
+        m = SOLD_TO_RE.search(text)
+        if not m:
+            continue
+        sold_to = m.group(1).strip()
+        if WRIST_KEYWORD in sold_to.lower():
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(pdf, dest_dir / pdf.name)
+            copied += 1
+            print(f"  {pdf.name}  ->  Wrist/   ({sold_to})")
+    print(f"\n  Scanned {scanned} invoice(s), copied {copied} to {dest_dir}.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -140,6 +168,9 @@ def main() -> int:
         sub.mkdir(parents=True, exist_ok=True)
         print(f"\n== {src} ==")
         split_pdf(src, sub)
+
+    print("\n== Collecting Wrist Far East invoices ==")
+    collect_wrist_invoices(args.out)
 
     return 0
 

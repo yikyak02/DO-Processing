@@ -39,6 +39,7 @@ SOLD_TO_RE = re.compile(
     re.IGNORECASE,
 )
 PO_NUMBER_RE = re.compile(r"PO\s*NUMBER\s*\n\s*(\S+)", re.IGNORECASE)
+DATE_RE = re.compile(r"Date\s+(\d{2})/(\d{2})/(\d{4})", re.IGNORECASE)
 
 # Invoice filenames look like "Invoice_<num>.pdf"; we use the <num> to find a
 # matching split DO in output/DO/.../DO_<num>.pdf.
@@ -69,6 +70,11 @@ def extract_sold_to(text: str) -> str | None:
 def extract_po_number(text: str) -> str | None:
     m = PO_NUMBER_RE.search(text)
     return m.group(1).strip() if m else None
+
+
+def extract_date_ddmmyyyy(text: str) -> str | None:
+    m = DATE_RE.search(text)
+    return f"{m.group(1)}{m.group(2)}{m.group(3)}" if m else None
 
 
 def target_folder(company: str) -> str | None:
@@ -196,7 +202,12 @@ def merge_invoices_with_pos(
     do_index = index_dos(do_root)
     print(f"  Indexed {len(do_index)} DO PDF(s) under {do_root}")
 
-    merged = merged_with_do = no_po_number = no_data_folder = no_xls_match = 0
+    merged = merged_with_do = 0
+    unmerged_no_po_number: list[str] = []
+    unmerged_no_xls_match: list[str] = []
+    unmerged_soffice_failed: list[str] = []
+    unmerged_no_data_folder: list[str] = []
+
     for customer_dir in sorted(p for p in po_root.iterdir() if p.is_dir()):
         if customer_dir.name == "combined":
             continue
@@ -207,7 +218,7 @@ def merge_invoices_with_pos(
                 "skipping merge",
                 file=sys.stderr,
             )
-            no_data_folder += 1
+            unmerged_no_data_folder.append(customer_dir.name)
             continue
 
         combined_dir = customer_dir / "combined"
@@ -216,23 +227,31 @@ def merge_invoices_with_pos(
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             for invoice_pdf in sorted(customer_dir.glob("Invoice_*.pdf")):
-                po_num = extract_po_number(read_page1_text(invoice_pdf))
+                page1_text = read_page1_text(invoice_pdf)
+                po_num = extract_po_number(page1_text)
                 if not po_num:
                     print(f"  {invoice_pdf.name}: no PO NUMBER field, skipping",
                           file=sys.stderr)
-                    no_po_number += 1
+                    unmerged_no_po_number.append(
+                        f"{customer_dir.name}/{invoice_pdf.name}"
+                    )
                     continue
                 xls = find_po_xls(data_folder, po_num)
                 if xls is None:
                     print(f"  {invoice_pdf.name}: PO {po_num} not found in "
                           f"{data_folder}, skipping", file=sys.stderr)
-                    no_xls_match += 1
+                    unmerged_no_xls_match.append(
+                        f"{customer_dir.name}/{invoice_pdf.name} (PO {po_num})"
+                    )
                     continue
                 try:
                     po_pdf = xls_to_pdf(xls, tmp_dir)
                 except subprocess.CalledProcessError as e:
                     print(f"  {invoice_pdf.name}: soffice failed for {xls.name}: "
                           f"{e.stderr.strip()}", file=sys.stderr)
+                    unmerged_soffice_failed.append(
+                        f"{customer_dir.name}/{invoice_pdf.name} (XLS {xls.name})"
+                    )
                     continue
 
                 parts = [invoice_pdf, po_pdf]
@@ -242,23 +261,53 @@ def merge_invoices_with_pos(
                     parts.append(do_pdf)
                     merged_with_do += 1
 
+                if customer_dir.name == "Con-Lash Supplies":
+                    date_str = extract_date_ddmmyyyy(page1_text)
+                    if date_str and inv_num:
+                        out_name = f"{po_num}_{inv_num}_{date_str}.pdf"
+                    else:
+                        print(f"  {invoice_pdf.name}: could not extract date, "
+                              f"using default filename", file=sys.stderr)
+                        out_name = invoice_pdf.name
+                else:
+                    out_name = invoice_pdf.name
+
                 combined_dir.mkdir(parents=True, exist_ok=True)
-                out_path = combined_dir / invoice_pdf.name
+                out_path = combined_dir / out_name
                 combine_pdfs(parts, out_path)
                 merged += 1
 
                 do_note = f"  +  {do_pdf.name}" if do_pdf else "  (no DO)"
                 print(f"  {invoice_pdf.name}  +  {xls.name}{do_note}  ->  "
-                      f"PO/{customer_dir.name}/combined/{invoice_pdf.name}")
+                      f"PO/{customer_dir.name}/combined/{out_name}")
 
     print(f"\n  Merged {merged} invoice+PO pair(s); "
           f"{merged_with_do} of those also include a DO.")
-    if no_po_number:
-        print(f"  Invoices with no PO NUMBER field: {no_po_number}")
-    if no_xls_match:
-        print(f"  Invoices whose PO number had no matching XLS: {no_xls_match}")
-    if no_data_folder:
-        print(f"  Customer folders with no data/PO subfolder: {no_data_folder}")
+
+    total_unmerged = (
+        len(unmerged_no_po_number)
+        + len(unmerged_no_xls_match)
+        + len(unmerged_soffice_failed)
+    )
+    if total_unmerged or unmerged_no_data_folder:
+        print(f"\n  Unmerged invoices: {total_unmerged}")
+        if unmerged_no_po_number:
+            print(f"    No PO NUMBER field ({len(unmerged_no_po_number)}):")
+            for name in unmerged_no_po_number:
+                print(f"      - {name}")
+        if unmerged_no_xls_match:
+            print(f"    No matching XLS in data/PO ({len(unmerged_no_xls_match)}):")
+            for name in unmerged_no_xls_match:
+                print(f"      - {name}")
+        if unmerged_soffice_failed:
+            print(f"    LibreOffice conversion failed ({len(unmerged_soffice_failed)}):")
+            for name in unmerged_soffice_failed:
+                print(f"      - {name}")
+        if unmerged_no_data_folder:
+            print(f"    Customer folders with no data/PO subfolder "
+                  f"({len(unmerged_no_data_folder)}):")
+            for name in unmerged_no_data_folder:
+                print(f"      - {name}")
 
 
 # ---------- entry point ----------------------------------------------------

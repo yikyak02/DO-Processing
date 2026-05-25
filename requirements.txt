@@ -1,6 +1,36 @@
-# Install with: pip3 install -r requirements.txt
-# System dependencies (not on PyPI):
-#   - tesseract  (split_dos.py only)        -> brew install tesseract
-#   - LibreOffice (process_po.py phase 2)   -> brew install --cask libreoffice
+# ---------------------------------------------------------------------------
+# Python dependencies
+# ---------------------------------------------------------------------------
+# Install with one of:
+#   pip install -r requirements.txt              (Windows / generic)
+#   pip3 install -r requirements.txt             (macOS / Linux, system Python)
+#   py -m pip install -r requirements.txt        (Windows, if `pip` not on PATH)
 
 PyMuPDF>=1.27,<2
+
+# ---------------------------------------------------------------------------
+# System dependencies (NOT installable via pip)
+# ---------------------------------------------------------------------------
+#
+# tesseract  -- required by split_dos.py (OCR for upside-down scanned pages)
+#   macOS:    brew install tesseract
+#   Windows:  winget install UB-Mannheim.TesseractOCR
+#             or download installer: https://github.com/UB-Mannheim/tesseract/wiki
+#   Linux:    sudo apt install tesseract-ocr
+#
+# LibreOffice -- required by process_po.py phase 2 (XLS -> PDF conversion)
+#   macOS:    brew install --cask libreoffice
+#   Windows:  winget install TheDocumentFoundation.LibreOffice
+#             or download installer: https://www.libreoffice.org/download/
+#   Linux:    sudo apt install libreoffice
+#
+# After installing on Windows, both tools may not be on PATH automatically.
+# Verify in PowerShell:
+#     where.exe soffice
+#     where.exe tesseract
+# If "Could not find files for the given pattern(s)", add the install dirs
+# to your PATH:
+#     C:\Program Files\LibreOffice\program
+#     C:\Program Files\Tesseract-OCR
+# (Settings -> System -> About -> Advanced system settings ->
+#  Environment Variables -> Path -> New)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -20,6 +21,15 @@ import fitz
 
 INVOICE_FILE_RE = re.compile(r"^Invoice_(\S+)\.pdf$", re.IGNORECASE)
 DO_FILE_RE = re.compile(r"^DO_(\S+)\.pdf$", re.IGNORECASE)
+SOLD_TO_RE = re.compile(
+    r"SOLD\s*TO\s*:\s*\n\s*DELIVER\s*TO\s*:\s*\n\s*(.+)",
+    re.IGNORECASE,
+)
+
+COLLECT_TARGETS: list[tuple[str, str]] = [
+    ("sinwa", "sinwa"),
+    ("francois", "francois"),
+]
 
 
 def index_by_number(root: Path, pattern: re.Pattern) -> dict[str, Path]:
@@ -52,6 +62,31 @@ def combine(invoice_path: Path, do_path: Path, out_path: Path) -> None:
         out.insert_pdf(do)
     out.save(out_path)
     out.close()
+
+
+def collect_by_sold_to(combined_root: Path) -> None:
+    """Copy combined PDFs into subfolders by keyword match against 'Sold To'."""
+    dest_dirs = {folder: combined_root / folder for _, folder in COLLECT_TARGETS}
+    counts: dict[str, int] = {folder: 0 for _, folder in COLLECT_TARGETS}
+    scanned = 0
+    for pdf in sorted(combined_root.glob("*.pdf")):
+        scanned += 1
+        with fitz.open(pdf) as doc:
+            text = doc[0].get_text("text")
+        m = SOLD_TO_RE.search(text)
+        if not m:
+            continue
+        sold_to = m.group(1).strip()
+        lc = sold_to.lower()
+        for keyword, folder in COLLECT_TARGETS:
+            if keyword in lc:
+                dest_dirs[folder].mkdir(parents=True, exist_ok=True)
+                shutil.copy2(pdf, dest_dirs[folder] / pdf.name)
+                counts[folder] += 1
+                print(f"  {pdf.name}  ->  {folder}/   ({sold_to})")
+    print(f"\n  Scanned {scanned} combined PDF(s).")
+    for folder, n in counts.items():
+        print(f"    {folder}: {n} file(s)")
 
 
 def main() -> int:
@@ -112,6 +147,9 @@ def main() -> int:
         print(f"Invoices with no matching DO ({len(missing_do)}): {', '.join(sorted(missing_do))}", file=sys.stderr)
     if unused_dos:
         print(f"DOs with no matching invoice ({len(unused_dos)}): {', '.join(unused_dos)}", file=sys.stderr)
+
+    print("\n== Sorting combined PDFs by Sold To keyword ==")
+    collect_by_sold_to(args.out)
 
     return 0
 
